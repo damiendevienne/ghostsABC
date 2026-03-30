@@ -8,6 +8,7 @@ Implements methods to infer ghost lineages (unsampled or extinct populations) in
 
 ## General pipeline
 
+
 ### Protocol without ghosts, following ABC papers by Blerina
 
 - Start from a given species tree and a collection of gene trees
@@ -17,6 +18,7 @@ Implements methods to infer ghost lineages (unsampled or extinct populations) in
 - Repeat the two last steps until simulated and observed gene trees agree. This happens when parameters are the good ones 
 
 For all this it is straightforward to make simulations so that we know the true parameteres and try to recover them.
+
 
 ### Protocol with ghosts, extension of Blerina's ABC approach
 
