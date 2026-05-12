@@ -14,7 +14,7 @@ dyn.load("/home/ddevienne/Documents/CRETE/local-work/DTL/rustree/target/release/
 source("/home/ddevienne/Documents/CRETE/local-work/DTL/rustree/R/rustree.R")
 
 
-###########
+###########s
 ### ABC ###
 ###########
 
@@ -120,11 +120,9 @@ sample_theta <- function(N = 1) {
     t <- runif(1, 0, t_max)
     l <- runif(1, 0, l_max)
 
-    if ((d + t) < (l + 0.1)) {
-
+    if (abs(d + t - l) < 0.15) {
       THETAS[i, ] <- c(d, t, l)
       i <- i + 1
-
     }
   }
 
@@ -185,20 +183,6 @@ keep_extant_tips_gn_full <- function(tree) {
 toape <- function(tree) {
     treeape <- read.tree(text = tree_to_newick(tree))
     treeape 
-}
-
-
-#############UPDATED
-keep_extant_tips_gn_full_da_trees <- function(tree) {
-#    treeape <- read.tree(text = tree_to_newick(tree))
-    tree.out <- keep.tip(tree, grep("e",get_species(tree$tip.label))) #nope... We still miss some extinct tips that are named e_becau
-    if (is.null(tree.out)) return(NULL) # nothing left in the tree after pruning 
-    if (Ntip(tree.out)<2) return(NULL) # if there are less than 2 tips, we cannot compute summary statistics, so we return NULL.
-    x <- plotPhyloCoor(tree.out)[1:Ntip(tree.out),1]
-    tol <- 1e-3  # adjust if needed
-    keep <- which(x >= (max(x) - tol))
-    tree.out.final <- keep.tip(tree.out, keep)
-    tree.out.final
 }
 
 augment_tree <- function(sptr, lambda, mu, rho, niter, nthin) {
@@ -268,7 +252,7 @@ toape <- function(tr) {
   read.tree(text = tree_to_newick(tr))
 }
 
-sim_gene_trees_fun <- function(sptr, n_gene_trees, d_val, t_val, l_val) {
+sim_gene_trees_fun_nogarranty <- function(sptr, n_gene_trees, d_val, t_val, l_val, seed=seed) {
   gene_trees <- simulate_dtl_batch_ape ( #_obs is for "observed"
     species_tree = sptr,
     n = n_gene_trees,          # Number of gene trees
@@ -276,8 +260,8 @@ sim_gene_trees_fun <- function(sptr, n_gene_trees, d_val, t_val, l_val) {
     lambda_t = t_val,
     lambda_l = l_val,
     transfer_alpha = 0,
-    require_extant = TRUE,
-    seed <- sample.int(.Machine$integer.max, 1)
+    require_extant = FALSE,
+    seed = seed
   )
   gene_trees_ape_clean <- lapply(gene_trees, keep_extant_tips_gn_full_da_trees) #remove unobservable tips
   # remove NULL trees (no extant tips after pruning)
@@ -287,6 +271,74 @@ sim_gene_trees_fun <- function(sptr, n_gene_trees, d_val, t_val, l_val) {
   class(gene_trees_ape_clean) <- "multiPhylo"
   return(gene_trees_ape_clean)
 }
+
+## This new version ensures to have enough at the end (or at least to have tried hard!)
+sim_gene_trees_fun <- function(sptr, n_gene_trees, d_val, t_val, l_val, seed=seed) {
+  gene_trees_ape_clean <- list()
+  max_attempts <- 20
+  attempt <- 0
+  n_to_simulate <- n_gene_trees  # first attempt: simulate exactly what's requested
+  
+  while (length(gene_trees_ape_clean) < n_gene_trees && attempt < max_attempts) {
+    attempt <- attempt + 1
+    if (attempt > 3) {
+      message(sprintf("Attempt %d: Simulating %d gene trees (have %d valid, need %d more) - dtl is (%.3f, %.3f, %.3f)", 
+                attempt, n_to_simulate, length(gene_trees_ape_clean), n_gene_trees - length(gene_trees_ape_clean), d_val, t_val, l_val))
+    }
+    gene_trees <- simulate_dtl_batch_ape(
+      species_tree = sptr,
+      n = n_to_simulate,
+      lambda_d = d_val,
+      lambda_t = t_val,
+      lambda_l = l_val,
+      transfer_alpha = 0,
+      require_extant = FALSE,
+      seed = seed + attempt
+    )
+    
+    new_trees <- lapply(gene_trees, keep_extant_tips_gn_full_da_trees)
+    new_trees <- new_trees[!sapply(new_trees, is.null)]
+    new_trees <- new_trees[lapply(new_trees, Ntip) >= 4]
+    
+    gene_trees_ape_clean <- c(gene_trees_ape_clean, new_trees)
+    
+    # Estimate survival rate and how many to simulate next round
+    n_missing <- n_gene_trees - length(gene_trees_ape_clean)
+    if (n_missing > 0) {
+      survival_rate <- length(new_trees) / n_to_simulate
+      if (survival_rate > 0) {
+        n_to_simulate <- ceiling(n_missing / survival_rate)  # compensate for expected loss
+      } else {
+        n_to_simulate <- n_missing * 2  # fallback if nothing survived
+      }
+    }
+  }
+  
+  if (length(gene_trees_ape_clean) == 0) {
+    warning("No valid gene trees produced after ", max_attempts, " attempts")
+    return(NULL)
+  }
+  
+  gene_trees_ape_clean <- gene_trees_ape_clean[1:min(length(gene_trees_ape_clean), n_gene_trees)]
+  class(gene_trees_ape_clean) <- "multiPhylo"
+  return(gene_trees_ape_clean)
+}
+
+
+#############UPDATED
+keep_extant_tips_gn_full_da_trees <- function(tree) {
+#    treeape <- read.tree(text = tree_to_newick(tree))
+    tree.out <- keep.tip(tree, grep("e",get_species(tree$tip.label))) #keep only tips with "e_"
+    if (is.null(tree.out)) return(NULL) # nothing left in the tree after keeping only "e_"
+    if (Ntip(tree.out)<2) return(NULL) # if there are less than 2 tips, we cannot compute summary statistics, so we return NULL.
+    x <- plotPhyloCoor(tree.out)[1:Ntip(tree.out),1]
+    tol <- 1e-3  # adjust if needed
+#    keep <- which(x >= (sptrheight - tol))
+    keep <- which(x >= (max(x) - tol))
+    tree.out.final <- keep.tip(tree.out, keep)
+    tree.out.final
+}
+
 
 
 sim_gene_trees_fun_old <- function(sptr, n_gene_trees, d_val, t_val, l_val, seed=123L) {
@@ -477,7 +529,7 @@ compute_informative_scores <- function(tr) {
     i_stat                 = i_stat(tr),
     j_one                  = j_one(tr),
     avg_ladder             = avg_ladder(tr),
-    tree_height            = tree_height(tr),
+    tree_height            = round(tree_height(tr),4), # to avoid numerical issues with very close values that should be the same
     gammaStat              = gammaStat(tr),
     mean_branch_length     = mean_branch_length(tr),
     treeness               = treeness(tr), 
